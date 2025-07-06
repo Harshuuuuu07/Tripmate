@@ -3,62 +3,91 @@ import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# -----------------------
-# 🔧 Load and Preprocess
-# -----------------------
+# ---------------------------
+# 🔁 ₹ Conversion from $
+# ---------------------------
+def convert_price_symbols(price):
+    symbol_map = {
+        '$': '₹',
+        '$$': '₹₹',
+        '$$$': '₹₹₹',
+        '$$$$': '₹₹₹₹'
+    }
+    return symbol_map.get(price.strip(), price.strip())
+
+# ---------------------------
+# 🧹 Load and preprocess data
+# ---------------------------
 @st.cache_data
-def load_data(filepath):
-    df = pd.read_csv(filepath)
-    df.dropna(subset=['Location', 'Type', 'Price_Range'], inplace=True)
+def load_data(file_path):
+    df = pd.read_csv(file_path)
+
+    # Clean and fill missing values
+    df.dropna(subset=['Name', 'Location', 'Type', 'Price_Range'], inplace=True)
     df.fillna('', inplace=True)
-    df['combined_features'] = df['Location'].str.lower() + ' ' + df['Type'].str.lower() + ' ' + df['Price_Range'].str.lower()
+
+    # Convert Price Range
+    df['Price_Range'] = df['Price_Range'].apply(convert_price_symbols)
+
+    # Combined features for content filtering
+    df['combined_features'] = (
+        df['Location'].str.lower() + ' ' +
+        df['Type'].str.lower() + ' ' +
+        df['Price_Range'].str.lower()
+    )
+
     df['Name_lower'] = df['Name'].str.lower()
     return df
 
+# ---------------------------
+# 🤖 Compute similarity
+# ---------------------------
 @st.cache_resource
 def compute_similarity(df):
     vectorizer = TfidfVectorizer()
-    feature_vectors = vectorizer.fit_transform(df['combined_features'])
-    return cosine_similarity(feature_vectors)
+    tfidf_matrix = vectorizer.fit_transform(df['combined_features'])
+    similarity_matrix = cosine_similarity(tfidf_matrix)
+    return similarity_matrix
 
-# -----------------------
-# 🤖 Recommender Logic
-# -----------------------
-def recommend_places(df, similarity_matrix, place_name, top_n=5):
-    place_name = place_name.strip().lower()
+# ---------------------------
+# 🔍 Recommendation Function
+# ---------------------------
+def recommend_places(df, similarity_matrix, selected_place, top_n=5):
+    selected_place = selected_place.lower().strip()
 
-    if place_name not in df['Name_lower'].values:
+    if selected_place not in df['Name_lower'].values:
         return None
 
-    idx = df[df['Name_lower'] == place_name].index[0]
-    scores = list(enumerate(similarity_matrix[idx]))
-    sorted_scores = sorted(scores, key=lambda x: x[1], reverse=True)[1:top_n+1]
+    index = df[df['Name_lower'] == selected_place].index[0]
+    scores = list(enumerate(similarity_matrix[index]))
+    scores = sorted(scores, key=lambda x: x[1], reverse=True)[1:top_n + 1]
 
-    return df.iloc[[i[0] for i in sorted_scores]]
+    recommended_df = df.iloc[[i[0] for i in scores]]
+    return recommended_df
 
-
-# -----------------------
-# 🚀 Streamlit App
-# -----------------------
+# ---------------------------
+# 🚀 Streamlit App UI
+# ---------------------------
 st.set_page_config(page_title="TripMate", page_icon="🌍")
-st.title("🌍 TripMate: Place Recommender")
-st.markdown("Find similar places based on location, type, and budget!")
+st.title("🌍 TripMate: Smart Place Recommender")
+st.markdown("Discover similar places based on location, type, and budget.")
 
 # Load data
 df = load_data("data.csv")
 similarity_matrix = compute_similarity(df)
 
-# Input from user
-place_input = st.selectbox("Select a place from the list:", sorted(df['Name'].unique()))
-num_recommendations = st.slider("Number of recommendations", 1, 10, 5)
+# UI inputs
+place_input = st.selectbox("🔎 Choose a place to get recommendations:", sorted(df['Name'].unique()))
+num_recommendations = st.slider("📌 Number of suggestions", 1, 10, 5)
 
-if st.button("🔍 Recommend"):
+# Show recommendations
+if st.button("🎯 Recommend"):
     recommendations = recommend_places(df, similarity_matrix, place_input, top_n=num_recommendations)
 
-    if recommendations is not None:
-        st.subheader(f"Places similar to **{place_input}**:")
+    if recommendations is not None and not recommendations.empty:
+        st.subheader(f"✅ Similar places to: **{place_input}**")
         for i, row in recommendations.iterrows():
-            st.markdown(f"**{row['Name']}** - {row['Location']} - {row['Type']} - {row['Price_Range']}")
+            st.markdown(f"**{row['Name']}**  \n📍 *{row['Location']}*  \n🍽️ *{row['Type']}*  \n💰 *{row['Price_Range']}*")
+            st.markdown("---")
     else:
-        st.error("Place not found. Please try another.")
-
+        st.error("❌ Place not found or no similar places found.")
